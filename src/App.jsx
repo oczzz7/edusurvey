@@ -14,8 +14,8 @@ import {
 } from 'firebase/firestore';
 
 // --- Firebase კონფიგურაცია ---
-const myLocalConfig = {
-  apiKey: "AIzaSyDgkPsfb9imX4H3FjAW04dVPq1bw6oVmek",
+const firebaseConfig = {
+  apiKey: "AIzaSyDgkPsfb9imX4H3FjAWO4dVPq1bw6oVmek", // გასწორდა: ასო "O" ციფრი "0"-ის ნაცვლად
   authDomain: "emis-75e8b.firebaseapp.com",
   projectId: "emis-75e8b",
   storageBucket: "emis-75e8b.firebasestorage.app",
@@ -23,30 +23,20 @@ const myLocalConfig = {
   appId: "1:471440760303:web:9c935a925dab9608a66a1a"
 };
 
-const getFirebaseConfig = () => {
-  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    try { return JSON.parse(__firebase_config); } catch (e) { return null; }
-  }
-  return myLocalConfig;
-};
-
-const config = getFirebaseConfig();
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'school-survey-pro-v3';
+const appId = 'school-survey-pro-v3';
 
 // ინიციალიზაცია
 let app, auth, db;
-if (config && config.apiKey) {
-  try {
-    if (!getApps().length) {
-      app = initializeApp(config);
-    } else {
-      app = getApps()[0];
-    }
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (err) {
-    console.error("Firebase init error:", err);
+try {
+  if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+  } else {
+    app = getApps()[0];
   }
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (err) {
+  console.error("Firebase init error:", err);
 }
 
 // --- კონსტანტები ---
@@ -108,7 +98,8 @@ export default function App() {
         await signInAnonymously(auth); 
       } catch (err) { 
         console.error("Auth error:", err);
-        setInitError("ავტორიზაციის შეცდომა. დარწმუნდით, რომ Anonymous Sign-in ჩართულია.");
+        // ვაჩვენოთ დეტალური შეცდომა, რომ მიზეზი უფრო ნათელი იყოს
+        setInitError(`ავტორიზაციის შეცდომა. დარწმუნდით, რომ Anonymous Sign-in ჩართულია. დეტალები: ${err.message}`);
       } finally { 
         setIsInitializing(false); 
       }
@@ -127,7 +118,11 @@ export default function App() {
       setSessions(data.length > 0 ? data : [{ id: 's_default', name: 'ძირითადი კვლევა', isActive: true, createdAt: new Date().toISOString() }]);
     }, (err) => {
       console.error("Session fetch error:", err);
-      if (err.code === 'permission-denied') setInitError("წვდომა შეზღუდულია. შეამოწმეთ Firestore-ის Rules.");
+      if (err.code === 'permission-denied') {
+        setInitError("წვდომა შეზღუდულია. შეამოწმეთ Firestore-ის Rules (Firebase Console -> Firestore -> Rules).");
+      } else {
+        setInitError(`მონაცემების წაკითხვის შეცდომა: ${err.message}`);
+      }
     });
 
     const unsubResponses = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'responses'), (snap) => {
@@ -171,17 +166,6 @@ export default function App() {
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'responses'), { ...data, sessionId: active?.id || 'default' });
   };
 
-  if (!config || !config.apiKey) {
-    return (
-      <div className="h-screen flex items-center justify-center p-6 bg-slate-50">
-        <div className="bg-white p-10 rounded-3xl shadow-xl text-center">
-          <Database className="mx-auto w-12 h-12 text-amber-500 mb-4" />
-          <h2 className="text-xl font-black">კონფიგურაცია ვერ მოიძებნა</h2>
-        </div>
-      </div>
-    );
-  }
-
   if (isInitializing) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-50 space-y-4">
@@ -194,10 +178,10 @@ export default function App() {
   if (initError) {
     return (
       <div className="h-screen flex items-center justify-center bg-red-50 p-6">
-        <div className="bg-white p-8 rounded-3xl shadow-lg border border-red-100 text-center space-y-4">
+        <div className="bg-white p-8 rounded-3xl shadow-lg border border-red-100 text-center space-y-4 max-w-lg">
           <X className="w-12 h-12 text-red-500 mx-auto" />
           <h2 className="text-lg font-black italic tracking-tighter">შეცდომა კავშირისას</h2>
-          <p className="text-sm text-slate-500 font-medium">{initError}</p>
+          <p className="text-sm text-slate-500 font-medium break-words">{initError}</p>
           <button onClick={() => window.location.reload()} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold text-xs uppercase">თავიდან ცდა</button>
         </div>
       </div>
