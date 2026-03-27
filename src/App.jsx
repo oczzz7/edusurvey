@@ -434,13 +434,22 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
     let sectionHasQuestions = false;
     (surveyData || []).forEach(q => {
       if (!q) return;
-      if(q.type === 'section') { currentSection = q; sectionHasQuestions = false; }
+      if(q.type === 'section') { 
+          currentSection = q; 
+          sectionHasQuestions = false; 
+      }
       else {
         // ტექსტის აღება. თუ ცარიელია, გამოტოვებს
         const text = String(q[role] || '').trim();
-        // თუ ტექსტი არსებობს, მხოლოდ მაშინ გამოჩნდება კითხვა (და ჩაითვლება პროგრესშიც)
+        // თუ ტექსტი არსებობს, მხოლოდ მაშინ გამოჩნდება კითხვა 
         if (text) {
-           if(currentSection && !sectionHasQuestions) { list.push({ ...currentSection, isSection: true }); sectionHasQuestions = true; }
+           if(currentSection && !sectionHasQuestions) { 
+             // სექციის სათაური ემატება სიას მხოლოდ ადმინისტრაციის როლისთვის
+             if (role === 'admin') {
+               list.push({ ...currentSection, isSection: true }); 
+             }
+             sectionHasQuestions = true; 
+           }
            list.push({ ...q, text, isSection: false });
         }
       }
@@ -818,6 +827,23 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
   const [newGrade, setNewGrade] = useState('');
   const [newSubjects, setNewSubjects] = useState({});
 
+  const handleAddSession = async () => {
+    const name = window.prompt("შეიყვანეთ ახალი კვლევის სესიის სახელი (მაგ: 2024 წლის საგაზაფხულო კვლევა):");
+    if (!name) return;
+    const newSession = {
+        id: `s_${Date.now()}`,
+        name,
+        isActive: sessions.length === 0, // თუ პირველია, ავტომატურად გააქტიურდეს
+        createdAt: new Date().toISOString()
+    };
+    await saveSessions([newSession]);
+  };
+
+  const handleToggleActive = async (sid) => {
+    const updated = sessions.map(s => ({ ...s, isActive: s.id === sid }));
+    await saveSessions(updated);
+  };
+
   const handleSurveyUpload = (e) => { 
     const file = e.target.files[0]; 
     if(!file) return; 
@@ -953,7 +979,7 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
         <div className="bg-white/90 backdrop-blur-md p-8 md:p-10 rounded-[2.5rem] border border-white shadow-lg space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="font-black text-2xl text-slate-800">სესიების მართვა</h3>
-            <button className="flex items-center gap-2 text-sm font-bold bg-blue-50 text-blue-600 px-4 py-2 rounded-xl border border-blue-100 opacity-50 cursor-not-allowed">
+            <button onClick={handleAddSession} className="flex items-center gap-2 text-sm font-bold bg-blue-50 text-blue-600 px-4 py-2 rounded-xl border border-blue-100 transition-colors hover:bg-blue-100">
               <Plus size={16}/> დამატება
             </button>
           </div>
@@ -964,9 +990,20 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
                   <span className="font-black text-lg text-slate-800">{s.name}</span>
                   {s.isActive && <span className="ml-3 text-[10px] uppercase font-black bg-[#ed1c24] text-white px-2 py-1 rounded-md shadow-sm">აქტიური</span>}
                 </div>
-                <button onClick={() => onDeleteSession(s.id)} className="text-red-400 hover:bg-red-50 hover:text-red-600 p-2.5 rounded-xl transition-colors">
-                  <Trash2 size={20}/>
-                </button>
+                <div className="flex items-center gap-3">
+                    {!s.isActive && (
+                        <button onClick={() => handleToggleActive(s.id)} className="text-xs font-bold text-slate-500 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-slate-200 transition-colors">
+                            გააქტიურება
+                        </button>
+                    )}
+                    <button onClick={() => {
+                        if(window.confirm(`ნამდვილად გსურთ კვლევის "${s.name}" და მისი ყველა პასუხის წაშლა?`)) {
+                            onDeleteSession(s.id);
+                        }
+                    }} className="text-red-400 hover:bg-red-50 hover:text-red-600 p-2.5 rounded-xl transition-colors">
+                      <Trash2 size={20}/>
+                    </button>
+                </div>
               </div>
             ))}
           </div>
