@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+// დავტოვეთ მხოლოდ ის აიკონები, რომლებსაც რეალურად ვიყენებთ
 import { 
-  ChevronLeft, Globe, ChevronRight, Settings, BarChart2, LogOut, 
-  Info, LayoutDashboard, MapPin, Building, ShieldCheck, 
-  BookOpen, GraduationCap, Users, Lock, TrendingUp, Plus, Upload, 
-  MessageSquare, FileSpreadsheet, Trash2, Save, Book, X, MessageCircle,
-  Search, ChevronDown, ChevronUp, FileText, Database, Download, Calendar, Check
+  ChevronLeft, ChevronRight, Settings, BarChart2, LogOut, 
+  FileSpreadsheet, Trash2, X, Database, Calendar 
 } from 'lucide-react';
 
 // Firebase იმპორტები
@@ -16,16 +14,14 @@ import {
 } from 'firebase/firestore';
 
 // --- Firebase კონფიგურაცია ---
-
-// ჩასვით აქ თქვენი Firebase-ის პარამეტრები (Firebase Console-დან)
 const myLocalConfig = {
-  apiKey: "AIzaSyDgkPsfb9imX4H3FjAWO4dVPq1bw6oVmek",
+  apiKey: "AIzaSyDgkPsfb9imX4H3FjAW04dVPq1bw6oVmek",
   authDomain: "emis-75e8b.firebaseapp.com",
   projectId: "emis-75e8b",
   storageBucket: "emis-75e8b.firebasestorage.app",
   messagingSenderId: "471440760303",
   appId: "1:471440760303:web:9c935a925dab9608a66a1a"
-}; // <--- აქ ჩასვით {...}
+};
 
 const getFirebaseConfig = () => {
   if (typeof __firebase_config !== 'undefined' && __firebase_config) {
@@ -40,14 +36,16 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'school-survey-pro-v3
 // ინიციალიზაცია
 let app, auth, db;
 if (config && config.apiKey) {
-  if (!getApps().length) {
-    app = initializeApp(config);
+  try {
+    if (!getApps().length) {
+      app = initializeApp(config);
+    } else {
+      app = getApps()[0];
+    }
     auth = getAuth(app);
     db = getFirestore(app);
-  } else {
-    app = getApps()[0];
-    auth = getAuth(app);
-    db = getFirestore(app);
+  } catch (err) {
+    console.error("Firebase init error:", err);
   }
 }
 
@@ -66,7 +64,6 @@ const RESPONSE_WEIGHTS = {
 
 const scaleOptions = Object.keys(RESPONSE_WEIGHTS);
 
-// --- EMIS ლოგო ---
 const EmisLogo = ({ className }) => {
   const urls = [
     "https://emis.ge/wp-content/uploads/2021/04/emis-logo.svg",
@@ -80,6 +77,7 @@ const EmisLogo = ({ className }) => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [initError, setInitError] = useState(null);
   const [userRole, setUserRole] = useState(ROLES.RESPONDENT);
   const [currentView, setCurrentView] = useState('landing'); 
   const [selection, setSelection] = useState({ region: '', district: '', schoolId: '' });
@@ -99,43 +97,66 @@ export default function App() {
     subjectSpecificIds: ["2.2", "4.1"]
   });
 
+  // 1. ავტორიზაცია
   useEffect(() => {
-    if (!auth) { setIsInitializing(false); return; }
+    if (!auth) { 
+      setIsInitializing(false); 
+      return; 
+    }
     const initAuth = async () => {
-      try { await signInAnonymously(auth); } catch (err) { console.error(err); } 
-      finally { setIsInitializing(false); }
+      try { 
+        await signInAnonymously(auth); 
+      } catch (err) { 
+        console.error("Auth error:", err);
+        setInitError("ავტორიზაციის შეცდომა. დარწმუნდით, რომ Anonymous Sign-in ჩართულია.");
+      } finally { 
+        setIsInitializing(false); 
+      }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
+  // 2. მონაცემების სინქრონიზაცია (Real-time)
   useEffect(() => {
     if (!user || !db) return;
 
     const unsubSessions = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'sessions'), (snap) => {
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setSessions(data.length > 0 ? data : [{ id: 's_default', name: 'ძირითადი კვლევა', isActive: true, createdAt: new Date().toISOString() }]);
+    }, (err) => {
+      console.error("Session fetch error:", err);
+      if (err.code === 'permission-denied') setInitError("წვდომა შეზღუდულია. შეამოწმეთ Firestore-ის Rules.");
     });
 
     const unsubResponses = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'responses'), (snap) => {
       setResponses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    }, (err) => console.error("Responses fetch error:", err));
 
-    const unsubSurvey = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'survey_schema'), (snap) => {
+    const unsubSurvey = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'survey', 'schema'), (snap) => {
       if (snap.exists()) setSurveyData(snap.data().questions || []);
-    });
+    }, (err) => console.error("Survey fetch error:", err));
 
-    const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'app_config'), (snap) => {
+    const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'), (snap) => {
       if (snap.exists()) setAppConfig(prev => ({ ...prev, ...snap.data() }));
-    });
+    }, (err) => console.error("Config fetch error:", err));
 
     return () => { unsubSessions(); unsubResponses(); unsubSurvey(); unsubConfig(); };
   }, [user]);
 
-  const saveSurvey = async (questions) => { if (db) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'survey_schema'), { questions }); };
-  const saveConfig = async (newConfig) => { if (db) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'app_config'), newConfig); };
-  const saveSessions = async (newS) => { if (db) for (const s of newS) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', s.id), s); };
+  const saveSurvey = async (questions) => { 
+    if (db) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'survey', 'schema'), { questions }); 
+  };
+  
+  const saveConfig = async (newConfig) => { 
+    if (db) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'), newConfig); 
+  };
+  
+  const saveSessions = async (newS) => { 
+    if (db) for (const s of newS) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', s.id), s); 
+  };
+  
   const deleteSession = async (sid) => {
     if (!db) return;
     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', sid));
@@ -143,21 +164,19 @@ export default function App() {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'responses', r.id));
     });
   };
+  
   const submitResponse = async (data) => {
     if (!db) return;
     const active = sessions.find(s => s.isActive) || sessions[0];
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'responses'), { ...data, sessionId: active.id });
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'responses'), { ...data, sessionId: active?.id || 'default' });
   };
 
-  if (!config) {
+  if (!config || !config.apiKey) {
     return (
-      <div className="h-screen flex items-center justify-center p-10 text-center">
-        <div className="p-8 bg-amber-50 rounded-[2.5rem] border border-amber-200 text-amber-700 space-y-4 shadow-xl">
-          <Database size={48} className="mx-auto" />
-          <h2 className="text-2xl font-black italic">Firebase-ის კონფიგურაცია საჭიროა</h2>
-          <p className="font-bold text-sm leading-relaxed opacity-80">
-            გთხოვთ VS Code-ში `myLocalConfig`-ში <br/> ჩასვათ თქვენი პროექტის პარამეტრები.
-          </p>
+      <div className="h-screen flex items-center justify-center p-6 bg-slate-50">
+        <div className="bg-white p-10 rounded-3xl shadow-xl text-center">
+          <Database className="mx-auto w-12 h-12 text-amber-500 mb-4" />
+          <h2 className="text-xl font-black">კონფიგურაცია ვერ მოიძებნა</h2>
         </div>
       </div>
     );
@@ -165,15 +184,34 @@ export default function App() {
 
   if (isInitializing) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 space-y-6">
-        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-        <div className="font-black text-slate-400 tracking-tighter text-xl animate-pulse italic">კავშირი მონაცემთა ბაზასთან...</div>
+      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 space-y-4">
+        <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+        <div className="font-black text-slate-400 animate-pulse">კავშირი მონაცემთა ბაზასთან...</div>
       </div>
     );
   }
 
-  const handleSelectionReset = () => { setSelection({ region: '', district: '', schoolId: '' }); setActiveSurveyRole(null); setGradeRange(null); setCurrentView('landing'); };
-  const activeSession = sessions.find(s => s.isActive) || sessions[0];
+  if (initError) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-red-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-lg border border-red-100 text-center space-y-4">
+          <X className="w-12 h-12 text-red-500 mx-auto" />
+          <h2 className="text-lg font-black italic tracking-tighter">შეცდომა კავშირისას</h2>
+          <p className="text-sm text-slate-500 font-medium">{initError}</p>
+          <button onClick={() => window.location.reload()} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold text-xs uppercase">თავიდან ცდა</button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSelectionReset = () => { 
+    setSelection({ region: '', district: '', schoolId: '' }); 
+    setActiveSurveyRole(null); 
+    setGradeRange(null); 
+    setCurrentView('landing'); 
+  };
+  
+  const activeSession = sessions.length > 0 ? (sessions.find(s => s.isActive) || sessions[0]) : null;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
@@ -217,7 +255,7 @@ export default function App() {
                   <h1 className="text-4xl font-black text-slate-900 leading-tight tracking-tighter italic">{appConfig.welcomeText}</h1>
                   {activeSession && (
                     <div className="inline-flex items-center gap-2 bg-slate-50 border border-slate-100 text-slate-500 px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm">
-                      <Calendar size={16} className="text-indigo-500"/> მიმდინარეობს: <span className="text-indigo-700">{activeSession.name}</span>
+                      <Calendar size={16} className="text-indigo-500"/> მიმდინარეობს: <span className="text-indigo-700">{activeSession.name || 'კვლევა'}</span>
                     </div>
                   )}
                   <div className="pt-4"><button onClick={() => setCurrentView('geoSelect')} className="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-blue-600 text-white px-12 py-5 rounded-2xl font-black hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-200/50">გამოკითხვის დაწყება <ChevronRight className="w-5 h-5" /></button></div>
@@ -235,7 +273,7 @@ export default function App() {
   );
 }
 
-// --- დამხმარე კომპონენტები ---
+// --- კომპონენტები ---
 
 function GeoSelectionView({ selection, setSelection, onConfirm }) {
   const geoData = [{ id: "t", name: "თბილისი", districts: [{ name: "ვაკე", schools: [{ id: "1001", name: "55-ე საჯარო სკოლა" }] }] }];
@@ -327,6 +365,8 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
     onComplete();
   };
 
+  if (renderList.length === 0) return <div className="text-center p-20 font-black text-slate-400 italic">კითხვები არ მოიძებნა</div>;
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-32 animate-in fade-in slide-in-from-bottom-4">
       <div className="sticky top-20 z-40 bg-white/90 backdrop-blur-md p-6 rounded-3xl border border-slate-200 shadow-lg flex items-center justify-between gap-6">
@@ -337,22 +377,57 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
       </div>
       <div className="space-y-6">
         {renderList.map((q, idx) => {
-          if (q.isSection) return <div key={idx} className="pt-8 pb-2 border-b-2 border-blue-100"><h3 className="text-xl font-black text-blue-900 leading-tight italic">{q.title}</h3></div>;
+          if (q.isSection) return <div key={q.id || `sec-${idx}`} className="pt-8 pb-2 border-b-2 border-blue-100"><h3 className="text-xl font-black text-blue-900 leading-tight italic">{q.title}</h3></div>;
+          
           const isSubjectSpecific = (appConfig.subjectSpecificIds || []).includes(q.id) && (role === 'student' || role === 'parent');
           const availableSubjects = gradeRange ? (appConfig.subjectsByGrade?.[gradeRange] || []) : [];
           const ans = answers[q.id] || {};
+          
           return (
             <div key={q.id} className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-6">
               <div className="flex gap-4">
                 <span className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black flex-shrink-0 text-sm">{q.id}</span>
                 <p className="font-bold text-slate-800 text-lg leading-relaxed">{q.text}</p>
               </div>
+              
               {!isSubjectSpecific ? (
-                <div className="flex flex-wrap gap-2 pt-2">{scaleOptions.map(opt => <button key={opt} onClick={() => updateAnswer(q.id, 'value', opt)} className={`flex-1 min-w-[100px] py-4 rounded-xl text-xs font-black border-2 transition-all ${ans.value === opt ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-500 border-transparent hover:border-slate-200'}`}>{opt}</button>)}</div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {scaleOptions.map(opt => (
+                    <button key={opt} onClick={() => updateAnswer(q.id, 'value', opt)} className={`flex-1 min-w-[100px] py-4 rounded-xl text-xs font-black border-2 transition-all ${ans.value === opt ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-500 border-transparent hover:border-slate-200'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
               ) : (
-                <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-black text-[10px] uppercase"><tr><th className="p-4 bg-white sticky left-0 z-10 border-r border-slate-100">საგანი</th>{scaleOptions.map(opt => <th key={opt} className="p-4 text-center">{opt}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{availableSubjects.map(subj => (<tr key={subj} className="hover:bg-blue-50/50"><td className="p-4 font-bold text-slate-700 bg-white sticky left-0 z-10 border-r border-slate-100">{subj}</td>{scaleOptions.map(opt => (<td key={opt} className="p-4 text-center cursor-pointer" onClick={() => updateMatrixAnswer(q.id, subj, opt)}><div className={`w-5 h-5 mx-auto rounded-full border-2 flex items-center justify-center ${ans.values?.[subj] === opt ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'}`}>{ans.values?.[subj] === opt && <div className="w-2 h-2 bg-white rounded-full"></div>}</div></td>))}</tr>))}</tbody></table></div></div>
+                <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-black text-[10px] uppercase">
+                        <tr>
+                          <th className="p-4 bg-white sticky left-0 z-10 border-r border-slate-100">საგანი</th>
+                          {scaleOptions.map(opt => <th key={opt} className="p-4 text-center">{opt}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {availableSubjects.map(subj => (
+                          <tr key={subj} className="hover:bg-blue-50/50 transition-colors">
+                            <td className="p-4 font-bold text-slate-700 bg-white sticky left-0 z-10 border-r border-slate-100">{subj}</td>
+                            {scaleOptions.map(opt => (
+                              <td key={opt} className="p-4 text-center cursor-pointer" onClick={() => updateMatrixAnswer(q.id, subj, opt)}>
+                                <div className={`w-5 h-5 mx-auto rounded-full border-2 flex items-center justify-center transition-all ${ans.values?.[subj] === opt ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'}`}>
+                                  {ans.values?.[subj] === opt && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
-              <textarea placeholder="კომენტარი..." value={ans.comment || ''} onChange={e => updateAnswer(q.id, 'comment', e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium resize-none min-h-[80px] outline-none focus:ring-2 ring-blue-500" />
+              
+              <textarea placeholder="კომენტარი..." value={ans.comment || ''} onChange={e => updateAnswer(q.id, 'comment', e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium resize-none min-h-[80px] outline-none focus:ring-2 ring-blue-500 transition-all" />
             </div>
           );
         })}
@@ -365,20 +440,71 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
 function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) {
   const [selectedSchoolId, setSelectedSchoolId] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id || '');
-  const filteredResponses = useMemo(() => { let d = responses.filter(r => r.sessionId === selectedSessionId); if (selectedSchoolId) d = d.filter(r => r.schoolId === selectedSchoolId); return d; }, [responses, selectedSessionId, selectedSchoolId]);
-  const analytics = useMemo(() => { if (filteredResponses.length === 0) return null; const scores = {}; filteredResponses.forEach(resp => { Object.entries(resp.answers || {}).forEach(([qId, ans]) => { if (!scores[qId]) scores[qId] = { sum: 0, count: 0, subjects: {} }; if (ans.isMatrix) { Object.entries(ans.values || {}).forEach(([s, v]) => { const w = RESPONSE_WEIGHTS[v]; scores[qId].sum += w; scores[qId].count++; if (!scores[qId].subjects[s]) scores[qId].subjects[s] = { sum: 0, count: 0 }; scores[qId].subjects[s].sum += w; scores[qId].subjects[s].count++; }); } else { const w = RESPONSE_WEIGHTS[ans.value]; scores[qId].sum += w; scores[qId].count++; } }); }); return scores; }, [filteredResponses]);
+  
+  const filteredResponses = useMemo(() => { 
+    let d = responses.filter(r => r.sessionId === selectedSessionId); 
+    if (selectedSchoolId) d = d.filter(r => r.schoolId === selectedSchoolId); 
+    return d; 
+  }, [responses, selectedSessionId, selectedSchoolId]);
+  
+  const analytics = useMemo(() => { 
+    if (filteredResponses.length === 0) return null; 
+    const scores = {}; 
+    filteredResponses.forEach(resp => { 
+      Object.entries(resp.answers || {}).forEach(([qId, ans]) => { 
+        if (!scores[qId]) scores[qId] = { sum: 0, count: 0, subjects: {} }; 
+        if (ans.isMatrix) { 
+          Object.entries(ans.values || {}).forEach(([s, v]) => { 
+            const w = RESPONSE_WEIGHTS[v]; 
+            scores[qId].sum += w; 
+            scores[qId].count++; 
+            if (!scores[qId].subjects[s]) scores[qId].subjects[s] = { sum: 0, count: 0 }; 
+            scores[qId].subjects[s].sum += w; 
+            scores[qId].subjects[s].count++; 
+          }); 
+        } else { 
+          const w = RESPONSE_WEIGHTS[ans.value]; 
+          scores[qId].sum += w; 
+          scores[qId].count++; 
+        } 
+      }); 
+    }); 
+    return scores; 
+  }, [filteredResponses]);
 
   return (
     <div className="space-y-8 animate-in fade-in">
-      <div className="flex items-center justify-between"><button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600 transition-colors"><ChevronLeft /> უკან</button><div className="bg-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm border text-slate-600">შევსებულია: <span className="text-blue-600">{filteredResponses.length}</span></div></div>
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600 transition-colors"><ChevronLeft /> უკან</button>
+        <div className="bg-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm border text-slate-600">შევსებულია: <span className="text-blue-600">{filteredResponses.length}</span></div>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-2"><label className="text-xs font-black uppercase text-slate-400">კვლევის სესია</label><select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold" value={selectedSessionId} onChange={e => setSelectedSessionId(e.target.value)}>{sessions.map(s => <option key={s.id} value={s.id}>{s.name} {s.isActive ? '(აქტიური)' : ''}</option>)}</select></div>
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-2">
+          <label className="text-xs font-black uppercase text-slate-400">კვლევის სესია</label>
+          <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold" value={selectedSessionId} onChange={e => setSelectedSessionId(e.target.value)}>
+            {sessions.map(s => <option key={s.id} value={s.id}>{s.name} {s.isActive ? '(აქტიური)' : ''}</option>)}
+          </select>
+        </div>
       </div>
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm divide-y overflow-hidden">
         {surveyData.map(q => {
           if (q.type === 'section') return <div key={q.id} className="p-6 bg-slate-50 font-black text-blue-900 italic tracking-tight">{q.title}</div>;
-          const stat = analytics?.[q.id]; if (!stat) return null; const score = Math.round(stat.sum / stat.count);
-          return (<div key={q.id} className="p-6 space-y-4"><div className="flex justify-between items-center gap-6"><span className="text-sm font-bold text-slate-700 flex-1">{q.admin || q.teacher || q.student || q.parent}</span><div className="flex items-center gap-4 w-48"><div className="h-2 bg-slate-100 rounded-full flex-1 overflow-hidden"><div className="h-full bg-blue-600 transition-all duration-1000" style={{ width: `${score}%` }}></div></div><span className="font-black text-slate-700 w-10 text-right">{score}%</span></div></div></div>);
+          const stat = analytics?.[q.id]; 
+          if (!stat) return null; 
+          const score = Math.round(stat.sum / stat.count);
+          return (
+            <div key={q.id} className="p-6 space-y-4">
+              <div className="flex justify-between items-center gap-6">
+                <span className="text-sm font-bold text-slate-700 flex-1">{q.admin || q.teacher || q.student || q.parent}</span>
+                <div className="flex items-center gap-4 w-48">
+                  <div className="h-2 bg-slate-100 rounded-full flex-1 overflow-hidden">
+                    <div className="h-full bg-blue-600 transition-all duration-1000" style={{ width: `${score}%` }}></div>
+                  </div>
+                  <span className="font-black text-slate-700 w-10 text-right">{score}%</span>
+                </div>
+              </div>
+            </div>
+          );
         })}
       </div>
     </div>
@@ -387,16 +513,75 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
 
 function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteSession, appConfig, saveConfig }) {
   const [tab, setTab] = useState('sessions');
+  const [uploadMsg, setUploadMsg] = useState("");
   const fileRef = useRef(null);
-  const handleUpload = (e) => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async (event) => { const text = event.target.result; const rows = text.split('\n').map(row => row.split(',')); const questions = []; rows.forEach(cols => { if(cols.length < 2) return; const id = cols[0]?.trim(); if(!id || isNaN(parseFloat(id))) return; if(id.endsWith('.0')) questions.push({ type: 'section', id, title: cols[1]?.trim() }); else questions.push({ type: 'question', id, admin: cols[1], teacher: cols[3], student: cols[5], parent: cols[7] }); }); await saveSurvey(questions); alert("კითხვარი განახლდა!"); }; reader.readAsText(file); };
+  
+  const handleUpload = (e) => { 
+    const file = e.target.files[0]; 
+    if(!file) return; 
+    const reader = new FileReader(); 
+    reader.onload = async (event) => { 
+      const text = event.target.result; 
+      const rows = text.split('\n').map(row => row.split(',')); 
+      const questions = []; 
+      rows.forEach(cols => { 
+        if(cols.length < 2) return; 
+        const id = cols[0]?.trim(); 
+        if(!id || isNaN(parseFloat(id))) return; 
+        if(id.endsWith('.0')) questions.push({ type: 'section', id, title: cols[1]?.trim() }); 
+        else questions.push({ type: 'question', id, admin: cols[1], teacher: cols[3], student: cols[5], parent: cols[7] }); 
+      }); 
+      await saveSurvey(questions); 
+      setUploadMsg("კითხვარი წარმატებით განახლდა!");
+      setTimeout(() => setUploadMsg(""), 4000);
+    }; 
+    reader.readAsText(file); 
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in">
       <div className="flex gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 w-fit shadow-sm overflow-x-auto">
-        {['sessions', 'survey', 'config'].map(t => (<button key={t} onClick={() => setTab(t)} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap ${tab === t ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>{t === 'sessions' ? 'სესიები' : t === 'survey' ? 'კითხვარი' : 'პარამეტრები'}</button>))}
+        {['sessions', 'survey', 'config'].map(t => (
+          <button key={t} onClick={() => setTab(t)} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap ${tab === t ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+            {t === 'sessions' ? 'სესიები' : t === 'survey' ? 'კითხვარი' : 'პარამეტრები'}
+          </button>
+        ))}
       </div>
-      {tab === 'sessions' && (<div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4"><h3 className="font-black text-xl italic tracking-tight">სესიების მართვა</h3>{sessions.map(s => (<div key={s.id} className={`p-4 rounded-xl border flex justify-between items-center ${s.isActive ? 'border-blue-500 bg-blue-50' : 'border-slate-100'}`}><span className="font-bold">{s.name}</span><button onClick={() => onDeleteSession(s.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={18}/></button></div>))}</div>)}
-      {tab === 'survey' && (<div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center gap-6"><div className="p-4 bg-blue-50 text-blue-600 rounded-full"><FileSpreadsheet size={32}/></div><button onClick={() => fileRef.current?.click()} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg transition-all active:scale-95">კითხვარის ატვირთვა (CSV)</button><input type="file" className="hidden" ref={fileRef} accept=".csv" onChange={handleUpload} /></div>)}
+      
+      {tab === 'sessions' && (
+        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+          <h3 className="font-black text-xl italic tracking-tight">სესიების მართვა</h3>
+          {sessions.map(s => (
+            <div key={s.id} className={`p-4 rounded-xl border flex justify-between items-center ${s.isActive ? 'border-blue-500 bg-blue-50' : 'border-slate-100'}`}>
+              <span className="font-bold">{s.name}</span>
+              <button onClick={() => onDeleteSession(s.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={18}/></button>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {tab === 'survey' && (
+        <div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center gap-6">
+          <div className="p-4 bg-blue-50 text-blue-600 rounded-full"><FileSpreadsheet size={32}/></div>
+          <button onClick={() => fileRef.current?.click()} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg transition-all active:scale-95">კითხვარის ატვირთვა (CSV)</button>
+          <input type="file" className="hidden" ref={fileRef} accept=".csv" onChange={handleUpload} />
+          {uploadMsg && <div className="text-emerald-600 font-bold bg-emerald-50 px-4 py-2 rounded-xl">{uploadMsg}</div>}
+        </div>
+      )}
+
+      {tab === 'config' && (
+        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+          <h3 className="font-black text-xl italic tracking-tight">პარამეტრები</h3>
+          <div className="space-y-2">
+            <label className="text-xs font-black uppercase text-slate-400">მისასალმებელი ტექსტი</label>
+            <textarea 
+              className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 min-h-[100px]"
+              value={appConfig.welcomeText || ''}
+              onChange={e => saveConfig({...appConfig, welcomeText: e.target.value})}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
