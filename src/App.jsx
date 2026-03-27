@@ -560,6 +560,7 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
   const [selectedRegion, setSelectedRegion] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState('');
   const [selectedSchool, setSelectedSchool] = useState('');
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState('');
   
   const [commentModalData, setCommentModalData] = useState(null);
   const [commentPage, setCommentPage] = useState(1);
@@ -597,9 +598,21 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
     if (selectedRegion || selectedDistrict || selectedSchool) {
       d = d.filter(r => validIds.includes(r.schoolId));
     }
+
+    if (selectedRoleFilter) {
+      d = d.filter(r => r.role === selectedRoleFilter);
+    }
     
     return d; 
-  }, [responses, selectedSessionId, selectedRegion, selectedDistrict, selectedSchool, availableSchools]);
+  }, [responses, selectedSessionId, selectedRegion, selectedDistrict, selectedSchool, selectedRoleFilter, availableSchools]);
+
+  const roleCounts = useMemo(() => {
+    const counts = { admin: 0, teacher: 0, student: 0, parent: 0 };
+    filteredResponses.forEach(r => {
+      if (counts[r.role] !== undefined) counts[r.role]++;
+    });
+    return counts;
+  }, [filteredResponses]);
   
   const analytics = useMemo(() => { 
     if (filteredResponses.length === 0) return null; 
@@ -684,26 +697,41 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
-          <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl"><FileSpreadsheet size={24}/></div>
-          <div>
-            <p className="text-[10px] font-black uppercase text-slate-400">შევსებული კითხვარი</p>
-            <p className="text-2xl font-black text-slate-800">{filteredResponses.length}</p>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+            <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl"><FileSpreadsheet size={24}/></div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">შევსებული კითხვარი</p>
+              <p className="text-2xl font-black text-slate-800">{filteredResponses.length}</p>
+            </div>
+          </div>
+          <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+            <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl"><Building size={24}/></div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">ჩართული სკოლები</p>
+              <p className="text-2xl font-black text-slate-800">{[...new Set(filteredResponses.map(r=>r.schoolId))].length}</p>
+            </div>
+          </div>
+          <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+            <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl"><Calendar size={24}/></div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">აქტიური სესია</p>
+              <p className="text-lg font-black text-slate-800 leading-tight">{sessions.find(s => s.id === selectedSessionId)?.name || 'უცნობია'}</p>
+            </div>
           </div>
         </div>
-        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
-          <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl"><Building size={24}/></div>
-          <div>
-            <p className="text-[10px] font-black uppercase text-slate-400">ჩართული სკოლები</p>
-            <p className="text-2xl font-black text-slate-800">{[...new Set(filteredResponses.map(r=>r.schoolId))].length}</p>
+        
+        {/* Role Counters Box */}
+        <div className="bg-white/80 backdrop-blur-sm p-4 rounded-3xl border border-white shadow-sm flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2 text-sm font-black text-slate-500 mr-2">
+             <Users size={16}/> აქტივობა როლების მიხედვით:
           </div>
-        </div>
-        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
-          <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl"><Calendar size={24}/></div>
-          <div>
-            <p className="text-[10px] font-black uppercase text-slate-400">აქტიური სესია</p>
-            <p className="text-lg font-black text-slate-800 leading-tight">{sessions.find(s => s.id === selectedSessionId)?.name || 'უცნობია'}</p>
+          <div className="flex gap-2 text-xs font-bold">
+             <span className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-xl border border-blue-100">ადმინისტრაცია: {roleCounts.admin}</span>
+             <span className="bg-amber-50 text-amber-700 px-3 py-1.5 rounded-xl border border-amber-100">მასწავლებელი: {roleCounts.teacher}</span>
+             <span className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-xl border border-emerald-100">მოსწავლე: {roleCounts.student}</span>
+             <span className="bg-purple-50 text-purple-700 px-3 py-1.5 rounded-xl border border-purple-100">მშობელი: {roleCounts.parent}</span>
           </div>
         </div>
       </div>
@@ -713,11 +741,21 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
           <Search className="text-slate-400" size={18}/>
           <h3 className="text-lg font-black text-slate-800">მონაცემების ფილტრაცია</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black uppercase text-slate-400 px-1">კვლევის სესია</label>
-            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 shadow-sm" value={selectedSessionId} onChange={e => { setSelectedSessionId(e.target.value); setSelectedRegion(''); setSelectedDistrict(''); setSelectedSchool(''); }}>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 shadow-sm" value={selectedSessionId} onChange={e => { setSelectedSessionId(e.target.value); setSelectedRegion(''); setSelectedDistrict(''); setSelectedSchool(''); setSelectedRoleFilter(''); }}>
               {sessions.map(s => <option key={s.id} value={s.id}>{s.name} {s.isActive ? '(აქტიური)' : ''}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-slate-400 px-1">როლი</label>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" value={selectedRoleFilter} onChange={e => setSelectedRoleFilter(e.target.value)}>
+              <option value="">ყველა როლი</option>
+              <option value="admin">ადმინისტრაცია</option>
+              <option value="teacher">მასწავლებელი</option>
+              <option value="student">მოსწავლე</option>
+              <option value="parent">მშობელი</option>
             </select>
           </div>
           <div className="space-y-1.5">
