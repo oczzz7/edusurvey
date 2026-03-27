@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ChevronLeft, ChevronRight, Settings, BarChart2, LogOut, 
   FileSpreadsheet, Trash2, X, Database, Calendar, MapPin, 
-  BookOpen, Plus, Search, AlertTriangle, Upload
+  BookOpen, Plus, Search, AlertTriangle, Upload, Check
 } from 'lucide-react';
 
 // Firebase იმპორტები
@@ -399,10 +399,11 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
     const list = [];
     let currentSection = null;
     let sectionHasQuestions = false;
-    surveyData.forEach(q => {
+    (surveyData || []).forEach(q => {
+      if (!q) return;
       if(q.type === 'section') { currentSection = q; sectionHasQuestions = false; }
       else {
-        const text = (q[role] || '').trim();
+        const text = String(q[role] || '').trim();
         if (text && text !== 'არ არის') {
            if(currentSection && !sectionHasQuestions) { list.push({ ...currentSection, isSection: true }); sectionHasQuestions = true; }
            list.push({ ...q, text, isSection: false });
