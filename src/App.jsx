@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ChevronLeft, ChevronRight, Settings, BarChart2, LogOut, 
   FileSpreadsheet, Trash2, X, Database, Calendar, MapPin, 
-  BookOpen, Plus, Search, AlertTriangle, Upload, Check
+  BookOpen, Plus, Search, AlertTriangle, Upload, Check,
+  Download, MessageCircle, Building, Users
 } from 'lucide-react';
 
 // Firebase იმპორტები
@@ -52,7 +53,7 @@ const RESPONSE_WEIGHTS = {
 
 const scaleOptions = Object.keys(RESPONSE_WEIGHTS);
 
-// ახალი, გენერირებული ლოგო მიმაგრებული სურათის მიხედვით
+// ლოგო
 const EmisLogo = ({ className }) => (
   <div className={`flex items-center gap-3 ${className}`}>
     <div className="relative w-10 h-10 flex-shrink-0">
@@ -69,6 +70,42 @@ const EmisLogo = ({ className }) => (
   </div>
 );
 
+// ჭკვიანი CSV პარსერი ბრჭყალებისა და მძიმეების სწორი წაკითხვისთვის
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let inQuotes = false;
+  let cell = '';
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      cell += '"';
+      i++; // ვტოვებთ მეორე ბრჭყალს
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+    } else if ((char === '\n' || (char === '\r' && nextChar === '\n')) && !inQuotes) {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      if (char === '\r') i++; 
+    } else {
+      cell += char;
+    }
+  }
+  if (cell !== '' || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -83,7 +120,6 @@ export default function App() {
   const [responses, setResponses] = useState([]);
   const [surveyData, setSurveyData] = useState([]);
   
-  // V4 დეფოლტ კონფიგურაცია
   const [appConfig, setAppConfig] = useState({ 
     welcomeText: "სკოლების შეფასების პლატფორმა",
     surveyDetails: "კვლევის მიზანია შევისწავლოთ სასწავლო პროცესის ხარისხი და საგანმანათლებლო საჭიროებები. თქვენი პასუხები კონფიდენციალურია და გამოყენებული იქნება მხოლოდ განზოგადებული სახით.",
@@ -98,7 +134,6 @@ export default function App() {
     subjectSpecificIds: ["2.2", "4.1"]
   });
 
-  // 1. ავტორიზაცია
   useEffect(() => {
     if (!auth) { 
       setIsInitializing(false); 
@@ -119,7 +154,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. მონაცემების სინქრონიზაცია
   useEffect(() => {
     if (!user || !db) return;
 
@@ -173,11 +207,9 @@ export default function App() {
   const clearEntireDatabase = async () => {
     if(!db) return;
     try {
-      // წაშალე ყველა პასუხი
       for (const r of responses) {
         await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'responses', r.id));
       }
-      // წაშალე ყველა სესია გარდა დეფოლტისა
       for (const s of sessions) {
         if(s.id !== 's_default') {
           await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', s.id));
@@ -223,6 +255,7 @@ export default function App() {
     setSelection({ region: '', district: '', schoolId: '' }); 
     setActiveSurveyRole(null); 
     setGradeRange(null); 
+    setUserRole(ROLES.RESPONDENT);
     setCurrentView('landing'); 
   };
   
@@ -250,7 +283,7 @@ export default function App() {
                 <span className="text-[10px] font-black uppercase bg-blue-100 text-blue-800 px-4 py-2 rounded-xl shadow-sm tracking-wide">
                   {userRole === ROLES.SUPER_ADMIN ? 'ადმინისტრატორი' : 'ანალიტიკოსი'}
                 </span>
-                <button onClick={() => { setUserRole(ROLES.RESPONDENT); handleSelectionReset(); }} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all shadow-sm bg-white border border-slate-200">
+                <button onClick={handleSelectionReset} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all shadow-sm bg-white border border-slate-200">
                   <LogOut className="w-5 h-5" />
                 </button>
               </div>
@@ -403,8 +436,10 @@ function SurveyForm({ role, gradeRange, schoolId, surveyData, appConfig, onCompl
       if (!q) return;
       if(q.type === 'section') { currentSection = q; sectionHasQuestions = false; }
       else {
+        // ტექსტის აღება. თუ ცარიელია, გამოტოვებს
         const text = String(q[role] || '').trim();
-        if (text && text !== 'არ არის') {
+        // თუ ტექსტი არსებობს, მხოლოდ მაშინ გამოჩნდება კითხვა (და ჩაითვლება პროგრესშიც)
+        if (text) {
            if(currentSection && !sectionHasQuestions) { list.push({ ...currentSection, isSection: true }); sectionHasQuestions = true; }
            list.push({ ...q, text, isSection: false });
         }
@@ -516,6 +551,10 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
   const [selectedRegion, setSelectedRegion] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState('');
   const [selectedSchool, setSelectedSchool] = useState('');
+  
+  const [commentModalData, setCommentModalData] = useState(null);
+  const [commentPage, setCommentPage] = useState(1);
+  const commentsPerPage = 5;
 
   const weights = appConfig.roleWeights || { admin: 25, teacher: 25, student: 25, parent: 25 };
 
@@ -556,12 +595,16 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
   const analytics = useMemo(() => { 
     if (filteredResponses.length === 0) return null; 
     
-    // Score tracking per role for weighting
     const scores = {}; 
     filteredResponses.forEach(resp => { 
       const role = resp.role;
       Object.entries(resp.answers || {}).forEach(([qId, ans]) => { 
-        if (!scores[qId]) scores[qId] = { roles: { admin:{s:0, c:0}, teacher:{s:0, c:0}, student:{s:0, c:0}, parent:{s:0, c:0} } }; 
+        if (!scores[qId]) scores[qId] = { roles: { admin:{s:0, c:0}, teacher:{s:0, c:0}, student:{s:0, c:0}, parent:{s:0, c:0} }, comments: [] }; 
+        
+        if (ans.comment && ans.comment.trim() !== '') {
+           scores[qId].comments.push({ role: resp.role, text: ans.comment, date: resp.timestamp, school: resp.schoolId });
+        }
+
         if (ans.isMatrix) { 
           Object.entries(ans.values || {}).forEach(([s, v]) => { 
             const w = RESPONSE_WEIGHTS[v]; 
@@ -576,7 +619,6 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
       }); 
     }); 
     
-    // Calculate final weighted score
     Object.keys(scores).forEach(qId => {
        let totalWeightApplied = 0;
        let weightedSum = 0;
@@ -598,46 +640,94 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
   const uniqueDistricts = [...new Set(availableSchools.filter(s => !selectedRegion || s.region === selectedRegion).map(s => s.district))];
   const uniqueSchoolsList = availableSchools.filter(s => (!selectedRegion || s.region === selectedRegion) && (!selectedDistrict || s.district === selectedDistrict));
 
+  const handleExportCSV = () => {
+    let csv = '\uFEFF';
+    csv += "რესპონდენტის ID,თარიღი,სკოლის ID,როლი,კლასი,კითხვის ID,საგანი,პასუხი,კომენტარი\n";
+    
+    filteredResponses.forEach(r => {
+      const date = new Date(r.timestamp).toLocaleString('ka-GE').replace(/,/g, '');
+      Object.entries(r.answers || {}).forEach(([qId, ans]) => {
+         const safeComment = (ans.comment || '').replace(/"/g, '""').replace(/\n/g, ' ');
+         if (ans.isMatrix) {
+            Object.entries(ans.values || {}).forEach(([subj, val]) => {
+               csv += `"${r.id}","${date}","${r.schoolId}","${r.role}","${r.gradeRange || ''}","${qId}","${subj}","${val}","${safeComment}"\n`;
+            });
+         } else {
+            csv += `"${r.id}","${date}","${r.schoolId}","${r.role}","${r.gradeRange || ''}","${qId}","","${ans.value || ''}","${safeComment}"\n`;
+         }
+      });
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `survey_export_${new Date().getTime()}.csv`;
+    link.click();
+  };
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white/80 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+    <div className="space-y-8 animate-in fade-in duration-500 relative">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white/80 backdrop-blur-md p-4 md:p-6 rounded-[2rem] border border-white shadow-sm">
         <button onClick={onBack} className="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600 transition-colors px-4 py-2 bg-white rounded-xl shadow-sm hover:shadow-md border border-slate-100"><ChevronLeft size={18} /> უკან</button>
-        <div className="flex items-center gap-3 bg-blue-50 px-5 py-3 rounded-2xl border border-blue-100 shadow-inner">
-          <Database size={20} className="text-blue-500" />
-          <span className="text-sm font-bold text-slate-600">შევსებულია კითხვარი:</span>
-          <span className="text-xl font-black text-blue-700">{filteredResponses.length}</span>
+        <button onClick={handleExportCSV} className="flex items-center gap-2 bg-[#2e3192] hover:bg-[#1a1c5e] text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all ml-auto">
+          <Download size={16} /> მონაცემების ექსპორტი (CSV)
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+          <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl"><FileSpreadsheet size={24}/></div>
+          <div>
+            <p className="text-[10px] font-black uppercase text-slate-400">შევსებული კითხვარი</p>
+            <p className="text-2xl font-black text-slate-800">{filteredResponses.length}</p>
+          </div>
+        </div>
+        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+          <div className="p-4 bg-indigo-50 text-indigo-600 rounded-2xl"><Building size={24}/></div>
+          <div>
+            <p className="text-[10px] font-black uppercase text-slate-400">ჩართული სკოლები</p>
+            <p className="text-2xl font-black text-slate-800">{[...new Set(filteredResponses.map(r=>r.schoolId))].length}</p>
+          </div>
+        </div>
+        <div className="bg-white/90 backdrop-blur-sm p-6 rounded-3xl border border-white shadow-sm flex items-center gap-4">
+          <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl"><Calendar size={24}/></div>
+          <div>
+            <p className="text-[10px] font-black uppercase text-slate-400">აქტიური სესია</p>
+            <p className="text-lg font-black text-slate-800 leading-tight">{sessions.find(s => s.id === selectedSessionId)?.name || 'უცნობია'}</p>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white/90 backdrop-blur-md p-8 rounded-[2.5rem] border border-white shadow-lg space-y-6">
-        <div className="flex items-center gap-3 mb-2">
-          <Search className="text-slate-400" size={20}/>
-          <h3 className="text-xl font-black text-slate-800">მონაცემების ფილტრაცია</h3>
+      <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2.5rem] border border-white shadow-lg space-y-4">
+        <div className="flex items-center gap-3 mb-2 px-2">
+          <Search className="text-slate-400" size={18}/>
+          <h3 className="text-lg font-black text-slate-800">მონაცემების ფილტრაცია</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="space-y-2">
-            <label className="text-xs font-black uppercase text-slate-400 px-1">კვლევის სესია</label>
-            <select className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500 shadow-sm" value={selectedSessionId} onChange={e => { setSelectedSessionId(e.target.value); setSelectedRegion(''); setSelectedDistrict(''); setSelectedSchool(''); }}>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-slate-400 px-1">კვლევის სესია</label>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 shadow-sm" value={selectedSessionId} onChange={e => { setSelectedSessionId(e.target.value); setSelectedRegion(''); setSelectedDistrict(''); setSelectedSchool(''); }}>
               {sessions.map(s => <option key={s.id} value={s.id}>{s.name} {s.isActive ? '(აქტიური)' : ''}</option>)}
             </select>
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-black uppercase text-slate-400 px-1">რეგიონი</label>
-            <select className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" value={selectedRegion} onChange={e => { setSelectedRegion(e.target.value); setSelectedDistrict(''); setSelectedSchool(''); }}>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-slate-400 px-1">რეგიონი</label>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" value={selectedRegion} onChange={e => { setSelectedRegion(e.target.value); setSelectedDistrict(''); setSelectedSchool(''); }}>
               <option value="">ყველა რეგიონი</option>
               {uniqueRegions.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-black uppercase text-slate-400 px-1">რაიონი</label>
-            <select className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" disabled={!selectedRegion} value={selectedDistrict} onChange={e => { setSelectedDistrict(e.target.value); setSelectedSchool(''); }}>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-slate-400 px-1">რაიონი</label>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" disabled={!selectedRegion} value={selectedDistrict} onChange={e => { setSelectedDistrict(e.target.value); setSelectedSchool(''); }}>
               <option value="">ყველა რაიონი</option>
               {uniqueDistricts.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-black uppercase text-slate-400 px-1">სკოლა</label>
-            <select className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" disabled={!selectedDistrict} value={selectedSchool} onChange={e => setSelectedSchool(e.target.value)}>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase text-slate-400 px-1">სკოლა</label>
+            <select className="w-full p-3 text-sm bg-slate-50/50 border border-slate-200 rounded-xl font-bold outline-none focus:ring-2 ring-blue-500 disabled:opacity-50 shadow-sm" disabled={!selectedDistrict} value={selectedSchool} onChange={e => setSelectedSchool(e.target.value)}>
               <option value="">ყველა სკოლა</option>
               {uniqueSchoolsList.map(s => <option key={s.id} value={s.id}>{s.code ? `[${s.code}] ` : ''}{s.name}</option>)}
             </select>
@@ -647,24 +737,32 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
 
       <div className="bg-white/90 backdrop-blur-md rounded-[2.5rem] border border-white shadow-lg divide-y divide-slate-100 overflow-hidden">
         {surveyData.map(q => {
-          if (q.type === 'section') return <div key={q.id} className="px-8 py-6 bg-slate-50/80 font-black text-blue-900 text-lg border-b border-slate-200">{q.title}</div>;
+          if (q.type === 'section') return <div key={q.id} className="px-8 py-5 bg-slate-50/80 font-black text-blue-900 text-base border-b border-slate-200">{q.title}</div>;
           
           const stat = analytics?.[q.id]; 
           if (!stat) return null; 
           
           const score = stat.finalScore;
+          const commentsCount = stat.comments?.length || 0;
           
           return (
-            <div key={q.id} className="p-8 hover:bg-slate-50/50 transition-colors flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
-              <div className="flex-1 space-y-1">
-                <span className="text-xs font-black px-2 py-1 bg-slate-100 rounded-lg text-slate-500 shadow-inner border border-slate-200">{q.id}</span>
-                <p className="text-sm font-bold text-slate-700 leading-relaxed mt-2">{q.admin || q.teacher || q.student || q.parent || q.text}</p>
+            <div key={q.id} className="p-6 md:p-8 hover:bg-slate-50/50 transition-colors flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+              <div className="flex-1 space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-black px-2.5 py-1 bg-slate-100 rounded-lg text-slate-500 shadow-inner border border-slate-200">{q.id}</span>
+                  {commentsCount > 0 && (
+                    <button onClick={() => { setCommentModalData({ qId: q.id, title: q.admin || q.text, comments: stat.comments }); setCommentPage(1); }} className="text-[10px] flex items-center gap-1.5 font-black px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors border border-blue-100">
+                      <MessageCircle size={12}/> {commentsCount} კომენტარი
+                    </button>
+                  )}
+                </div>
+                <p className="text-sm font-bold text-slate-700 leading-relaxed pt-1">{q.admin || q.teacher || q.student || q.parent || q.text}</p>
               </div>
-              <div className="flex items-center gap-5 w-full md:w-64 shrink-0 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner">
-                <div className="h-3 bg-slate-200 rounded-full flex-1 overflow-hidden shadow-inner">
+              <div className="flex items-center gap-4 w-full md:w-64 shrink-0 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner">
+                <div className="h-2.5 bg-slate-200 rounded-full flex-1 overflow-hidden shadow-inner">
                   <div className={`h-full rounded-full transition-all duration-1000 ${score >= 75 ? 'bg-emerald-500' : score >= 50 ? 'bg-amber-400' : 'bg-[#ed1c24]'}`} style={{ width: `${score}%` }}></div>
                 </div>
-                <span className="font-black text-slate-800 w-12 text-right text-lg">{score}%</span>
+                <span className="font-black text-slate-800 w-10 text-right text-base">{score}%</span>
               </div>
             </div>
           );
@@ -673,6 +771,40 @@ function AnalyticsPanel({ responses, surveyData, appConfig, sessions, onBack }) 
           <div className="p-20 text-center font-bold text-slate-400">არჩეული ფილტრებით მონაცემები არ მოიძებნა.</div>
         )}
       </div>
+
+      {commentModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-100 animate-in zoom-in-95">
+            <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 bg-slate-50/50">
+              <div className="space-y-1">
+                <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">კითხვა {commentModalData.qId}</span>
+                <h3 className="text-sm font-bold text-slate-800 leading-snug">{commentModalData.title}</h3>
+              </div>
+              <button onClick={() => setCommentModalData(null)} className="p-2 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-sm hover:shadow-md transition-all shrink-0"><X size={18}/></button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 space-y-4 bg-slate-50/30 custom-scrollbar">
+              {commentModalData.comments.slice((commentPage-1)*commentsPerPage, commentPage*commentsPerPage).map((c, i) => (
+                <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase text-slate-400 border-b border-slate-50 pb-2">
+                    <span className="text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded">{c.role}</span>
+                    <span>{new Date(c.date).toLocaleDateString('ka-GE')}</span>
+                  </div>
+                  <p className="text-sm font-medium text-slate-700 leading-relaxed">{c.text}</p>
+                </div>
+              ))}
+            </div>
+
+            {commentModalData.comments.length > commentsPerPage && (
+              <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-white">
+                <button disabled={commentPage === 1} onClick={() => setCommentPage(p=>p-1)} className="p-2 text-slate-500 disabled:opacity-30 hover:bg-slate-50 rounded-lg font-bold text-xs flex items-center gap-1"><ChevronLeft size={16}/> წინა</button>
+                <span className="text-xs font-black text-slate-400">გვერდი {commentPage} / {Math.ceil(commentModalData.comments.length / commentsPerPage)}</span>
+                <button disabled={commentPage === Math.ceil(commentModalData.comments.length / commentsPerPage)} onClick={() => setCommentPage(p=>p+1)} className="p-2 text-slate-500 disabled:opacity-30 hover:bg-slate-50 rounded-lg font-bold text-xs flex items-center gap-1">შემდეგი <ChevronRight size={16}/></button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -683,9 +815,8 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
   const fileRef = useRef(null);
   const geoFileRef = useRef(null);
   
-  // საგნების მართვის სტეიტები
   const [newGrade, setNewGrade] = useState('');
-  const [newSubjects, setNewSubjects] = useState({}); // { gradeLevel: text }
+  const [newSubjects, setNewSubjects] = useState({});
 
   const handleSurveyUpload = (e) => { 
     const file = e.target.files[0]; 
@@ -693,15 +824,32 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
     const reader = new FileReader(); 
     reader.onload = async (event) => { 
       const text = event.target.result; 
-      const rows = text.split('\n').map(row => row.split(',')); 
+      const rows = parseCSV(text); 
       const questions = []; 
-      rows.forEach(cols => { 
-        if(cols.length < 2) return; 
+      
+      for (let i = 1; i < rows.length; i++) {
+        const cols = rows[i];
+        if(cols.length < 2) continue; 
+        
         const id = cols[0]?.trim(); 
-        if(!id || isNaN(parseFloat(id))) return; 
-        if(id.endsWith('.0')) questions.push({ type: 'section', id, title: cols[1]?.trim() }); 
-        else questions.push({ type: 'question', id, admin: cols[1], teacher: cols[3], student: cols[5], parent: cols[7] }); 
-      }); 
+        if(!id) continue; 
+        
+        const isSection = !id.includes('.'); 
+        
+        if(isSection) {
+           questions.push({ type: 'section', id, title: cols[1]?.trim() }); 
+        } else {
+           questions.push({ 
+             type: 'question', 
+             id, 
+             admin: cols[1]?.trim() || '', 
+             teacher: cols[2]?.trim() || '', 
+             student: cols[3]?.trim() || '', 
+             parent: cols[4]?.trim() || '' 
+           }); 
+        }
+      }
+
       await saveSurvey(questions); 
       setUploadMsg("კითხვარი წარმატებით განახლდა!");
       setTimeout(() => setUploadMsg(""), 4000);
@@ -715,13 +863,11 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
     const reader = new FileReader(); 
     reader.onload = async (event) => { 
       const text = event.target.result; 
-      // Format expected: Region, District, SchoolName, SchoolCode
-      const rows = text.split('\n').map(row => row.split(','));
-      
+      const rows = parseCSV(text);
       const newRegionsObj = {};
       
       rows.forEach((cols, i) => {
-        if(i === 0 || cols.length < 3) return; // skip header or empty
+        if(i === 0 || cols.length < 3) return;
         const regName = cols[0]?.trim();
         const distName = cols[1]?.trim();
         const schoolName = cols[2]?.trim();
@@ -735,7 +881,6 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
         newRegionsObj[regName].districtsObj[distName].schools.push({ id: `s_${schoolCode || Math.random()}`, name: schoolName, code: schoolCode });
       });
 
-      // Convert Objects to Arrays
       const builtRegions = Object.values(newRegionsObj).map(r => ({
          id: r.id,
          name: r.name,
@@ -748,7 +893,6 @@ function AdminPortal({ surveyData, saveSurvey, sessions, saveSessions, onDeleteS
     reader.readAsText(file);
   }
 
-  // Subject Helpers
   const addGrade = () => {
     if(!newGrade) return;
     const currentGrades = appConfig.grades || ["I-IV კლასი", "V-IX კლასი", "X-XII კლასი"];
